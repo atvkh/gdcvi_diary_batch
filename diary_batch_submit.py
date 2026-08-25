@@ -733,16 +733,24 @@ def main():
     plan = build_plan_from_config(args)
     if plan is None:
         run_init()
-        return
-    action = show_main_menu(plan)
-    if action == "init":
-        run_init()
-        return
-    if action == "test":
-        test_content(args)
-        return
-    if action == "exit":
-        return
+        plan = build_plan_from_config(args)
+        if plan is None:
+            return
+    # 主菜单循环:改配置/测试后回菜单,选正式才离开
+    while True:
+        action = show_main_menu(plan)
+        if action == "exit":
+            return
+        if action == "init":
+            run_init()
+            plan = build_plan_from_config(args)
+            if plan is None:
+                return
+            continue
+        if action == "test":
+            test_content(args)
+            continue
+        break
     state = load_state()
     if state.get("student_id") and state["student_id"] != plan["student_id"]:
         state = {"student_id": plan["student_id"], "results": {}}
