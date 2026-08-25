@@ -1,0 +1,23 @@
+{
+  "version": 2,
+  "accounts": [
+    {"student_id": "YourStudentID", "password": "YourPassword123"}
+  ],
+  "llm": {
+    "api_base": "http://your-newapi-host:3000/v1",
+    "api_key": "sk-xxxxxxxx",
+    "model": "your-model-name",
+    "prompt": "",
+    "timeout_sec": 60
+  },
+  "batch": {
+    "start": "2026-07-13",
+    "end": "2027-01-18",
+    "weekday_mode": 1,
+    "holiday_mode": 3,
+    "batch_size": 10,
+    "gen_workers": 4,
+    "gap": [3, 8],
+    "pause": [15, 30]
+  }
+}

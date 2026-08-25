@@ -1,0 +1,21 @@
+# 敏感配置与运行状态(含明文凭证/学号)
+config.json
+diary_batch_state.json
+
+# 打包产物
+dist/
+build/
+*.spec
+__pycache__/
+*.pyc
+
+# 抓包数据与开发期校准工具(含真实域名,非核心功能)
+probe_capture.log
+probe_flows.mitm
+capture_probe.py
+
+# IDE / OS / 杂项
+.workbuddy/
+*.log
+.DS_Store
+Thumbs.db
