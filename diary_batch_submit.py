@@ -687,6 +687,33 @@ def build_dates(plan: dict) -> list:
     return dates
 
 
+def show_main_menu(plan: dict) -> str:
+    """双击 exe(无参)时弹主菜单;返回 init/test/run/exit"""
+    print("=" * 50)
+    print("  实习日记批量提交 - 主菜单")
+    print("=" * 50)
+    print("  1. 修改配置(进 --init 引导)")
+    print("  2. 测试生成 1 篇(不提交)")
+    print(f"  3. {'dry-run 预演(不提交)' if plan.get('dry_run') else '正式批量提交'}")
+    print("  4. 退出")
+    print("-" * 50)
+    print("  (命令行 --init/--test/--dry-run 可跳过本菜单)")
+    while True:
+        try:
+            c = input("请选择 [3]: ").strip()
+        except EOFError:
+            c = "3"
+        if c in ("", "3"):
+            return "run"
+        if c == "1":
+            return "init"
+        if c == "2":
+            return "test"
+        if c == "4":
+            return "exit"
+        print("  无效,请输入 1-4")
+
+
 def main():
     if not acquire_single_instance():
         print("[!] 已有 diary_batch_submit 实例在运行,请勿重复启动。")
@@ -706,6 +733,15 @@ def main():
     plan = build_plan_from_config(args)
     if plan is None:
         run_init()
+        return
+    action = show_main_menu(plan)
+    if action == "init":
+        run_init()
+        return
+    if action == "test":
+        test_content(args)
+        return
+    if action == "exit":
         return
     state = load_state()
     if state.get("student_id") and state["student_id"] != plan["student_id"]:
