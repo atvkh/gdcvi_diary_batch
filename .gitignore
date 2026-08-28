@@ -6,6 +6,7 @@ diary_batch_state.json
 dist/
 build/
 *.spec
+*.exe
 __pycache__/
 *.pyc
 

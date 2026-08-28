@@ -320,6 +320,15 @@ def mark_result(state: dict, date_str: str, status: str, bt: str = "", detail: s
 DONE_STATUSES = ("success", "duplicate")
 
 
+def pick_pc(batches: list, selected: dict, ds: str) -> str:
+    """按日期自动选批次:取起止区间覆盖该日的批次;无覆盖时兜底当前批次。
+    服务端按日期拒重仍有效,即使选错批次也不会产生重复日记"""
+    for b in batches:
+        if b["start"] and b["start"] <= ds <= b["end"]:
+            return b["pc"]
+    return selected["pc"]
+
+
 def find_config() -> Path | None:
     candidates = [
         SCRIPT_DIR / "config.json",
@@ -435,26 +444,41 @@ class Client:
         return {"Xtcs": self.xtcs, "Xtu": self.student_id,
                 "Xtsf": "xs", "Xtdm": self.xtdm}
 
-    def fetch_pc(self) -> str:
+    def fetch_batches(self) -> list:
+        """解析表单页全部实习批次,返回 [{pc, start, end, selected}]。
+        起止日期从选项文本解析(格式: 起止日期：X年X月X日至Y年Y月Y日),
+        单项解析失败时 start/end 为空串(该批次不参与按日期匹配,仅作兜底)"""
         r = self.post(DIARY_ADD_URL, self.base_form())
         if r.status_code != 200:
             raise RuntimeError(f"日记表单页 HTTP {r.status_code}")
-        # 先圈定 pcl 下拉框,再在框内优先取 selected option(selected/value
-        # 属性顺序无关),无 selected 时兜底取第一个数字 value,避免取错批次
+        # 先圈定 pcl 下拉框,再逐项解析 value/selected/起止日期
         m = re.search(r'name="pcl".*?</select>', r.text, re.DOTALL)
         if not m:
             raise RuntimeError("未从表单页解析到实习批次 pc")
         block = m.group(0)
-        for tag in re.finditer(r'<option[^>]*>', block, re.IGNORECASE):
-            attrs = tag.group(0)
-            if re.search(r'\bselected\b', attrs, re.IGNORECASE):
-                v = re.search(r'\bvalue="(\d+)"', attrs)
-                if v:
-                    return v.group(1)
-        m2 = re.search(r'<option[^>]*\bvalue="(\d+)"', block, re.IGNORECASE)
-        if m2:
-            return m2.group(1)
-        raise RuntimeError("未从表单页解析到实习批次 pc")
+        batches = []
+        for om in re.finditer(
+                r'<option([^>]*)>([^<]*)</option>', block, re.IGNORECASE):
+            attrs, label = om.group(1), om.group(2)
+            v = re.search(r'\bvalue="(\d+)"', attrs)
+            if not v:
+                continue  # 跳过"请选择实习批次"占位项(空 value)
+            start = end = ""
+            dm = re.search(
+                r'(\d{4})年(\d{1,2})月(\d{1,2})日.*?至.*?'
+                r'(\d{4})年(\d{1,2})月(\d{1,2})日', label)
+            if dm:
+                y1, mo1, d1, y2, mo2, d2 = (int(x) for x in dm.groups())
+                start = f"{y1:04d}-{mo1:02d}-{d1:02d}"
+                end = f"{y2:04d}-{mo2:02d}-{d2:02d}"
+            batches.append({
+                "pc": v.group(1), "start": start, "end": end,
+                "selected": bool(
+                    re.search(r'\bselected\b', attrs, re.IGNORECASE)),
+            })
+        if not batches:
+            raise RuntimeError("未从表单页解析到实习批次 pc")
+        return batches
 
     def fetch_calendar_existing(self, pc: str) -> dict:
         """返回当月已有日记 {date_str: 详情页路径};只能可靠判断当前月份"""
@@ -931,11 +955,15 @@ def main():
         else plan["student_id"]
     log(f"登录成功: {who},解析实习批次...")
     try:
-        pc = client.fetch_pc()
+        batches = client.fetch_batches()
     except (RuntimeError, requests.RequestException) as e:
         log(f"解析实习批次失败: {e}")
         sys.exit(1)
-    log(f"实习批次 pc={pc}")
+    selected = next((b for b in batches if b["selected"]), batches[0])
+    for b in batches:
+        rng = f"{b['start']} ~ {b['end']}" if b["start"] else "起止日期未解析"
+        log(f"  批次 pc={b['pc']} {rng}"
+            + (" (★当前★)" if b["selected"] else ""))
 
     today = time.strftime("%Y-%m-%d")
     all_dates = build_dates(plan)
@@ -951,7 +979,7 @@ def main():
     log("获取当月日历查重(服务端仅能判断当月)...")
     calendar_existing = {}
     try:
-        calendar_existing = client.fetch_calendar_existing(pc)
+        calendar_existing = client.fetch_calendar_existing(selected["pc"])
     except Exception as e:
         log(f"警告: 日历获取失败({e}),当月查重跳过")
     existed_in_cal = [ds for ds in todo if ds in calendar_existing]
@@ -966,6 +994,20 @@ def main():
           + (f" -> {','.join(existed_in_cal)}" if existed_in_cal else ""))
     print(f"  本次待提交     : {len(todo)} 篇"
           f"(其中未来日期 {len(future)} 篇,已实测可提交)")
+    pc_groups = {}
+    for ds in todo:
+        pc_groups.setdefault(pick_pc(batches, selected, ds), []).append(ds)
+    if len(pc_groups) > 1:
+        seg = ", ".join(f"pc={p} {len(v)} 篇"
+                        for p, v in sorted(pc_groups.items()))
+        print(f"  涉及批次       : {seg}(按日期自动选择)")
+    uncovered = [ds for ds in todo
+                 if pick_pc(batches, selected, ds) == selected["pc"]
+                 and not (selected["start"]
+                          and selected["start"] <= ds <= selected["end"])]
+    if uncovered:
+        print(f"  [!] {len(uncovered)} 天不在任何批次起止范围内,"
+              f"将用当前批次 pc={selected['pc']} 提交")
     print(f"  节奏           : 每批{plan['batch_size']}篇,篇间隔"
           f"{plan['gap'][0]}~{plan['gap'][1]}秒,批间停"
           f"{plan['pause'][0]}~{plan['pause'][1]}秒,"
@@ -1032,7 +1074,8 @@ def main():
                 log(f"  提交 {len(sub_todo)} 篇")
             for k, ds in enumerate(sub_todo, 1):
                 bt, nr = contents[ds]
-                status, detail = client.submit(bt, nr, pc, ds)
+                status, detail = client.submit(
+                    bt, nr, pick_pc(batches, selected, ds), ds)
                 mark_result(state, ds, status, bt=bt, detail=detail)
                 tag = {"success": "OK ", "duplicate": "DUP", "failed": "ERR"}[status]
                 print(f"  [提交 {k}/{len(sub_todo)}] {tag} {ds} 《{bt}》"
